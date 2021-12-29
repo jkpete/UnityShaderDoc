@@ -19,9 +19,14 @@
 - normalize():Cg语言标准函数库中的函数  
 - 函数功能：对向量进行归一化（按比例缩短到单位长度，方向不变）
 
-#### dot(A,B)
+#### dot(A,B) 【a·b = (ax,ay,az) · (bx,by,bz) = axbx + ayby + azbz 】
 
 - 功能：返回A和B的点积
+- 参数：A和B可以是标量，也可以是向量
+
+#### cross（A,B）【a×b = (ax,ay,az) × (bx,by,bz) = (aybz - azby , azbx - axbz , axby - aybx) 】
+
+- 功能：返回A和B的叉积
 - 参数：A和B可以是标量，也可以是向量
 
 #### Saturate(x)
@@ -773,10 +778,214 @@ Shader "ShaderTest/Shadow" {
 
 # 3. 纹理篇
 
-### 关于UV（纹理映射坐标）：
+### 3.1 关于UV（纹理映射坐标）：
 
 在美术人员建模的时候，通常会在建模软件中利用纹理展开技术把纹理映射坐标存储在每个顶点上，纹理映射坐标定义了该顶点在纹理中对应的2d坐标。
 
 通常，这些坐标使用一个二维变量（u，v）来表示，其中u是横向坐标，v是纵向坐标。因此纹理映射坐标也被称为UV坐标。
 
 虽然纹理的大小多种多样，但顶点UV坐标的范围通常都被归一化到【0-1】范围内。
+
+### 3.2 关于纹理（贴图）资源：
+
+Unity支持以下格式的图片作为贴图资源：bmp，exr，gif，hdr，iff，jpg，pict，png，psd，tga，tiff。
+
+### 3.3 纹理的资源的属性
+
+本篇只做简要概括重要属性，其他属性详情见下方链接
+
+[Unity - Manual: Texture Import Settings](https://docs.unity3d.com/Manual/class-TextureImporter.html)
+
+##### 1.TextureType
+
+声明纹理类型
+
+| 类型                    | 描述                                                       |
+| --------------------- | -------------------------------------------------------- |
+| Default               | 默认是所有纹理最常用的设置。它提供对纹理导入的大多数属性的访问。                         |
+| Normal Map            | 作为法线贴图时，将颜色通道转换为适合实时法线贴图的格式。                             |
+| Editor GUI and Legacy | 如果您在任何 HUD 或 GUI 控件上使用纹理，请选择Editor GUI 和 Legacy GUI。     |
+| Sprite (2D and UI)    | 正在使用的纹理在2D游戏中作为一个精灵（Sprite）。                             |
+| Cursor                | 作为一个默认光标（替代鼠标）。                                          |
+| Cookie                | 用于场景光照的基础参数缓存。                                           |
+| Lightmap              | 光照贴图，此选项支持编码为特定格式（RGBM 或 dLDR，具体取决于平台），可用于存放屏幕后期处理的贴图数据。 |
+| Single Channel        | 如果您只需要纹理中的一个通道，请选择单通道。                                   |
+
+##### 2.WarpMode
+
+该项决定了纹理坐标如果超出【0-1】这个范围，会如何平铺。
+
+| 类型     | 描述                                 |
+| ------ | ---------------------------------- |
+| Repeat | 坐标超过1时，取小数部分，坐标多出的部分会重复。           |
+| Clamp  | 坐标截取到1，小于0的部分截取到0，坐标多出的部分会按照边缘色延伸。 |
+
+##### 3.FilterMode
+
+该项决定了当纹理由于变换产生拉伸时，将使用哪种滤波模式。
+
+| 类型                | 描述                                               |
+| ----------------- | ------------------------------------------------ |
+| Point (no filter) | 不使用滤波，拉伸时，采样像素只有一个                               |
+| Bilinear          | 线性滤波，对于每个目标像素，会找到四个邻近像素，对他们进行线性插值混合得到最终像素，会变得模糊。 |
+| Trilinear         | 在Bilinear的基础上，使用多级渐远纹理之间进行混合                     |
+
+##### 4.Default-MaxSize
+
+如果导入的纹理大小超过了这个选项对应的设置值。那么Unity将会把该纹理缩放为这个的最大分辨率。
+
+可以通过调整该选项，来优化移动以及计算性能低的设备平台使之更流畅。
+
+### 3.4 纹理映射案例
+
+使用纹理时，不仅要声明纹理变量本身，还要声明一个 纹理名 + _ST 格式的float4变量。
+
+纹理名 + _ST：xy存放缩放值，zw存放偏移值。用于纹理坐标转换。
+
+```c
+Shader "TestShader/TextureOnly" {
+    Properties {
+        _MainTex ("Main Tex", 2D) = "white" {}
+    }
+    SubShader {
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Lighting.cginc"
+
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float4 texcoord : TEXCOORD0;
+            };
+
+            struct v2f {
+                float4 position : SV_POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            v2f vert(a2v v) {
+                 v2f o;
+                 o.position = UnityObjectToClipPos(v.vertex);
+                 // 转换UV坐标贴图，转换后的样式依据贴图资源设置而改变，该方法自动_MainTex_ST变量
+                o.uv = TRANSFORM_TEX(v.texcoord, _MainTex);
+                 return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                fixed4 c = tex2D(_MainTex, i.uv);
+                return fixed4(c.rgb, 1.0);
+            }
+            ENDCG
+        }
+    } 
+    FallBack "Diffuse"
+}
+```
+
+### 3.5 法线纹理映射案例
+
+在介绍法线映射之前，要提到凹凸映射的两种贴图方案，一种是高度贴图，一种是法线贴图。
+
+高度纹理用于模拟表面位移，亮的部分能遮挡暗的部分，该纹理的颜色用于表达表面海拔高度，颜色越亮值越高。
+
+法线纹理直接储存表面法线，从而使光照信息按照法线贴图提供的数据进行计算。
+
+在使用法线纹理之前，必须了解切线空间的存在意义，想了解TBN矩阵的可以参阅以下文章
+
+https://zhuanlan.zhihu.com/p/139593847
+
+切线空间就是，反应这个模型空间坐标相对应纹理坐标相的变换坡度。引自
+
+http://www.cnitblog.com/wjk98550328/archive/2010/04/15/35112.html
+
+法线贴图的颜色值代表的含义
+
+法线贴图的rgb颜色中，r代表横向法线，y代表纵向法线。法线贴图的具体图解，可详见另一篇法线贴图文档部分。里面有详细的法线贴图数据映射关系。
+
+```c
+Shader "TestShader/MineBumpTestShader"
+{
+	Properties {
+        _BumpMap("Normal Map", 2D) = "bump" {}
+    }
+    SubShader
+    {
+        Pass
+        {
+            Tags{"LightMode"="ForwardBase"}
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Lighting.cginc"
+            #include "UnityCG.cginc"
+
+            sampler2D _BumpMap;
+
+            struct a2v{
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                float4 tangent : TANGENT;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct v2f {
+                float3 worldPos : TEXCOORD0;
+                float2 uv : TEXCOORD1;
+                float4 pos : SV_POSITION;
+                half3 wNormal : TEXCOORD2;
+                half3 wTangent : TEXCOORD3;
+                half3 wBitangent : TEXCOORD4;
+            };
+
+            // 顶点着色器现在也需要一个逐顶点的切线向量。
+            // 在Unity中，切线是一个四维的向量，w分向量用于表现二次切线向量的方向
+            // 我们仍然需要贴图来配合(翻译自Unity Manual 法线贴图篇)
+            v2f vert (a2v v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.uv = v.uv;
+                o.wTangent = UnityObjectToWorldDir(v.tangent.xyz);
+                o.wNormal = UnityObjectToWorldNormal(v.normal);
+                // compute bitangent from cross product of normal and tangent
+                // 通过计算法线与切线的叉积，得到二次切线bitangent,以此来导出切线空间矩阵
+                // output the tangent space matrix
+                half tangentSign = v.tangent.w;
+                o.wBitangent = cross(o.wNormal, o.wTangent) * tangentSign;
+                
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                // 依据法线贴图，将rgba的范围（原【0-1】）规范到【-1~1】之间
+                half3 tnormal = UnpackNormal(tex2D(_BumpMap, i.uv));
+                // 上文提到的TBN矩阵，用于将法线方向从切线空间转换到世界空间中。
+                float3x3 TBNMatrix = float3x3(i.wTangent,i.wBitangent,i.wNormal);
+                // 根据解包后的法线数据，算出世界空间下的法线方向。
+                half3 worldNormal = mul(tnormal,TBNMatrix);
+                // 灯光方向
+                half3 worldLightDir = normalize(_WorldSpaceLightPos0.xyz);
+                // 计算球谐光照，反应环境光（读者可以尝试只输出这个变量看看效果）
+                fixed3 ambient = ShadeSH9(fixed4(worldNormal,1));
+                // 计算主光源
+				fixed3 diffuse = _LightColor0.rgb * saturate(dot(worldNormal, worldLightDir));
+                // 融合环境光与主光源（需要添加高光反射的，去前面高光反射代码摘抄并在下方加算即可）
+                fixed4 c = fixed4(ambient+diffuse,1);
+                return c;
+            }
+            ENDCG
+        }
+    }
+}
+
+
+```
+
+### 3.6渐变纹理
