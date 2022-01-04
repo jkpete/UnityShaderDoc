@@ -910,7 +910,7 @@ http://www.cnitblog.com/wjk98550328/archive/2010/04/15/35112.html
 ```c
 Shader "TestShader/MineBumpTestShader"
 {
-	Properties {
+    Properties {
         _BumpMap("Normal Map", 2D) = "bump" {}
     }
     SubShader
@@ -958,7 +958,7 @@ Shader "TestShader/MineBumpTestShader"
                 // output the tangent space matrix
                 half tangentSign = v.tangent.w;
                 o.wBitangent = cross(o.wNormal, o.wTangent) * tangentSign;
-                
+
                 return o;
             }
 
@@ -975,7 +975,7 @@ Shader "TestShader/MineBumpTestShader"
                 // 计算球谐光照，反应环境光（读者可以尝试只输出这个变量看看效果）
                 fixed3 ambient = ShadeSH9(fixed4(worldNormal,1));
                 // 计算主光源
-				fixed3 diffuse = _LightColor0.rgb * saturate(dot(worldNormal, worldLightDir));
+                fixed3 diffuse = _LightColor0.rgb * saturate(dot(worldNormal, worldLightDir));
                 // 融合环境光与主光源（需要添加高光反射的，去前面高光反射代码摘抄并在下方加算即可）
                 fixed4 c = fixed4(ambient+diffuse,1);
                 return c;
@@ -984,8 +984,84 @@ Shader "TestShader/MineBumpTestShader"
         }
     }
 }
-
-
 ```
 
-### 3.6渐变纹理
+### 3.6 渐变纹理
+
+用于渲染风格化的物体时，可以采用渐变纹理的方式，得到处理之后的阴影。比如卡通风格的渲染，可以采用一张二分图或者三分图当做渐变纹理，来进行渲染。
+
+笔者准备了两张渐变纹理用于做下方shader的素材，详见img/gradient.jpg
+
+```c
+Shader "TestShader/RampTexture" {
+    Properties {
+        _Color ("Color Tint", Color) = (1, 1, 1, 1)
+        // 渐变贴图声明
+        _RampTex ("Ramp Tex", 2D) = "white" {}
+        _SpeRampTex ("Spe Ramp Tex", 2D) = "white" {}
+        _Specular ("Specular", Color) = (1, 1, 1, 1)
+        _Gloss ("Gloss", Range(8.0, 256)) = 20
+    }
+    SubShader {
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+
+            CGPROGRAM
+
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Lighting.cginc"
+
+            fixed4 _Color;
+            sampler2D _RampTex;
+            float4 _RampTex_ST;
+            
+            fixed4 _Specular;
+            float _Gloss;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                float4 texcoord : TEXCOORD0;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float3 worldNormal : TEXCOORD0;
+                float3 worldPos : TEXCOORD1;
+                float2 uv : TEXCOORD2;
+            };
+
+            v2f vert(a2v v) {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.uv = TRANSFORM_TEX(v.texcoord, _RampTex);
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                fixed3 worldNormal = normalize(i.worldNormal);
+                fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
+                fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz;
+                //fixed3 ambient = ShadeSH9(fixed4(worldNormal,1));
+                // Use the texture to sample the diffuse color
+                fixed lambert = dot(worldNormal, worldLightDir);
+                fixed halfLambert  = 0.5 * lambert + 0.5;
+                fixed3 diffuseColor = tex2D(_RampTex, fixed2(halfLambert, halfLambert)).rgb * _Color.rgb;
+                diffuseColor = fixed3(diffuseColor.r,diffuseColor.g,diffuseColor.b);
+                fixed3 diffuse = _LightColor0.rgb * diffuseColor;
+                fixed3 viewDir = normalize(UnityWorldSpaceViewDir(i.worldPos));
+                fixed3 halfDir = normalize(worldLightDir + viewDir);
+                fixed3 specular = pow(max(0, dot(worldNormal, halfDir)), _Gloss);
+                specular = tex2D(_RampTex, fixed2(specular.r, specular.r)).rgb / 2 * _LightColor0.rgb * _Specular.rgb;
+                return fixed4(ambient + diffuse + specular, 1.0);
+            }
+
+            ENDCG
+        }
+    } 
+    FallBack "Specular"
+}
+```
