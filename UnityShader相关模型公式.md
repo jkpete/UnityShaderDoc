@@ -778,6 +778,10 @@ Shader "ShaderTest/Shadow" {
 
 # 3. 纹理篇
 
+###### tex2D(sampler2D,Vector2)
+
+从一张纹理中，对一个点进行采样的方法，返回值为一个float4的颜色值。sampler2D为贴图来源，Vector2为贴图对应的坐标。
+
 ### 3.1 关于UV（纹理映射坐标）：
 
 在美术人员建模的时候，通常会在建模软件中利用纹理展开技术把纹理映射坐标存储在每个顶点上，纹理映射坐标定义了该顶点在纹理中对应的2d坐标。
@@ -1010,12 +1014,14 @@ Shader "TestShader/RampTexture" {
 
             #pragma vertex vert
             #pragma fragment frag
+
             #include "Lighting.cginc"
 
             fixed4 _Color;
             sampler2D _RampTex;
             float4 _RampTex_ST;
-            
+            sampler2D _SpeRampTex;
+            float4 _SpeRampTex_ST;
             fixed4 _Specular;
             float _Gloss;
 
@@ -1044,18 +1050,22 @@ Shader "TestShader/RampTexture" {
             fixed4 frag(v2f i) : SV_Target {
                 fixed3 worldNormal = normalize(i.worldNormal);
                 fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
+
+                // 可根据需求调整环境光照
                 fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz;
                 //fixed3 ambient = ShadeSH9(fixed4(worldNormal,1));
-                // Use the texture to sample the diffuse color
+                // 计算半兰伯特光照
                 fixed lambert = dot(worldNormal, worldLightDir);
                 fixed halfLambert  = 0.5 * lambert + 0.5;
+                
                 fixed3 diffuseColor = tex2D(_RampTex, fixed2(halfLambert, halfLambert)).rgb * _Color.rgb;
                 diffuseColor = fixed3(diffuseColor.r,diffuseColor.g,diffuseColor.b);
                 fixed3 diffuse = _LightColor0.rgb * diffuseColor;
+
                 fixed3 viewDir = normalize(UnityWorldSpaceViewDir(i.worldPos));
                 fixed3 halfDir = normalize(worldLightDir + viewDir);
                 fixed3 specular = pow(max(0, dot(worldNormal, halfDir)), _Gloss);
-                specular = tex2D(_RampTex, fixed2(specular.r, specular.r)).rgb / 2 * _LightColor0.rgb * _Specular.rgb;
+                specular = tex2D(_SpeRampTex, fixed2(specular.r, specular.r)).rgb/2 * _LightColor0.rgb * _Specular.rgb;
                 return fixed4(ambient + diffuse + specular, 1.0);
             }
 
@@ -1063,5 +1073,93 @@ Shader "TestShader/RampTexture" {
         }
     } 
     FallBack "Specular"
+}
+```
+
+### 3.7 遮罩纹理
+
+遮罩纹理允许我们保护某些区域，使它们免于某些修改
+
+使用遮罩纹理的流程：通过采样得到遮罩纹理的纹素值，然后使用其中的某个（或者某几个）通道的值（比如texture.r）来与某种表面属性进项相乘，这样，当该通道的值为0时，可以保护表面不受该属性的影响。
+
+遮罩纹理在剔除某个数据的需求中起着至关重要的作用（例如更真实的砖瓦缝隙不受高光光照影响）
+
+下方为一个应用于高光反射的遮罩纹理着色器。
+
+```c
+Shader "TestShader/MaskTexture" {
+	Properties {
+		_Color ("Color Tint", Color) = (1, 1, 1, 1)
+		_MainTex ("Main Tex", 2D) = "white" {}
+		_BumpMap ("Normal Map", 2D) = "bump" {}
+		_BumpScale("Bump Scale", Float) = 1.0
+		_SpecularMask ("Specular Mask", 2D) = "white" {}
+		_SpecularScale ("Specular Scale", Range(0.0,1.0)) = 1.0
+		_Specular ("Specular", Color) = (1, 1, 1, 1)
+		_Gloss ("Gloss", Range(8.0, 256)) = 20
+	}
+	SubShader {
+		Pass { 
+			Tags { "LightMode"="ForwardBase" }
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+			
+			#include "Lighting.cginc"
+			
+			fixed4 _Color;
+			sampler2D _MainTex;
+			float4 _MainTex_ST;
+			sampler2D _BumpMap;
+			float _BumpScale;
+			sampler2D _SpecularMask;
+			float _SpecularScale;
+			fixed4 _Specular;
+			float _Gloss;
+			
+			struct a2v {
+				float4 vertex : POSITION;
+				float3 normal : NORMAL;
+				float4 tangent : TANGENT;
+				float4 texcoord : TEXCOORD0;
+			};
+			
+			struct v2f {
+				float4 pos : SV_POSITION;
+				float2 uv : TEXCOORD0;
+				float3 lightDir: TEXCOORD1;
+				float3 viewDir : TEXCOORD2;
+			};
+			
+			v2f vert(a2v v) {
+				v2f o;
+				o.pos = UnityObjectToClipPos(v.vertex);
+				o.uv.xy = v.texcoord.xy * _MainTex_ST.xy + _MainTex_ST.zw;
+				TANGENT_SPACE_ROTATION;
+				o.lightDir = mul(rotation, ObjSpaceLightDir(v.vertex)).xyz;
+				o.viewDir = mul(rotation, ObjSpaceViewDir(v.vertex)).xyz;
+				return o;
+			}
+			
+			fixed4 frag(v2f i) : SV_Target {
+			 	fixed3 tangentLightDir = normalize(i.lightDir);
+				fixed3 tangentViewDir = normalize(i.viewDir);
+				fixed3 tangentNormal = UnpackNormal(tex2D(_BumpMap, i.uv));
+				tangentNormal.xy *= _BumpScale;
+				tangentNormal.z = sqrt(1.0 - saturate(dot(tangentNormal.xy, tangentNormal.xy)));
+				fixed3 albedo = tex2D(_MainTex, i.uv).rgb * _Color.rgb;
+				fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz * albedo;
+				fixed3 diffuse = _LightColor0.rgb * albedo * max(0, dot(tangentNormal, tangentLightDir));
+			 	fixed3 halfDir = normalize(tangentLightDir + tangentViewDir);
+			 	// 获取r通道下的遮罩数据值
+			 	fixed specularMask = tex2D(_SpecularMask, i.uv).r * _SpecularScale;
+			 	// 混合遮罩数据
+			 	fixed3 specular = _LightColor0.rgb * _Specular.rgb * pow(max(0, dot(tangentNormal, halfDir)), _Gloss) * specularMask;
+				return fixed4(ambient + diffuse + specular, 1.0);
+			}
+			ENDCG
+		}
+	} 
+	FallBack "Specular"
 }
 ```
