@@ -4,6 +4,10 @@
 
 结合UnityShader 编写指南中的部分编码，该文档仅提供编写思路，对常用的几个渲染模型进行了编写。
 
+
+
+感谢冯乐乐的《Unity Shader入门精要》，参考书本代码的基础上，重新整理了部分代码，以及添加了些许自己的原创代码，方便各位读者查阅使用。
+
 # 0.所用数学函数
 
 #### 
@@ -782,6 +786,10 @@ Shader "ShaderTest/Shadow" {
 
 从一张纹理中，对一个点进行采样的方法，返回值为一个float4的颜色值。sampler2D为贴图来源，Vector2为贴图对应的坐标。
 
+###### texCUBE(samplerCUBE,Vector3)
+
+立方体纹理中，对点进行采样的方法，返回值为一个float4的颜色值。samplerCUBE为立方体贴图来源，Vector3为中心点指向的方向坐标（这里提一点，由于立方体纹理中是六个面组成的，所以中心点为立方体模型的中心，中心点到采样点之间会形成一个方向矢量，此矢量为Vector3的值），另外由于该变量代表方向坐标，故不需要进行归一化处理。
+
 ### 3.1 关于UV（纹理映射坐标）：
 
 在美术人员建模的时候，通常会在建模软件中利用纹理展开技术把纹理映射坐标存储在每个顶点上，纹理映射坐标定义了该顶点在纹理中对应的2d坐标。
@@ -1088,78 +1096,420 @@ Shader "TestShader/RampTexture" {
 
 ```c
 Shader "TestShader/MaskTexture" {
+    Properties {
+        _Color ("Color Tint", Color) = (1, 1, 1, 1)
+        _MainTex ("Main Tex", 2D) = "white" {}
+        _BumpMap ("Normal Map", 2D) = "bump" {}
+        _BumpScale("Bump Scale", Float) = 1.0
+        _SpecularMask ("Specular Mask", 2D) = "white" {}
+        _SpecularScale ("Specular Scale", Range(0.0,1.0)) = 1.0
+        _Specular ("Specular", Color) = (1, 1, 1, 1)
+        _Gloss ("Gloss", Range(8.0, 256)) = 20
+    }
+    SubShader {
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "Lighting.cginc"
+
+            fixed4 _Color;
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+            sampler2D _BumpMap;
+            float _BumpScale;
+            sampler2D _SpecularMask;
+            float _SpecularScale;
+            fixed4 _Specular;
+            float _Gloss;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                float4 tangent : TANGENT;
+                float4 texcoord : TEXCOORD0;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float2 uv : TEXCOORD0;
+                float3 lightDir: TEXCOORD1;
+                float3 viewDir : TEXCOORD2;
+            };
+
+            v2f vert(a2v v) {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.uv.xy = v.texcoord.xy * _MainTex_ST.xy + _MainTex_ST.zw;
+                TANGENT_SPACE_ROTATION;
+                o.lightDir = mul(rotation, ObjSpaceLightDir(v.vertex)).xyz;
+                o.viewDir = mul(rotation, ObjSpaceViewDir(v.vertex)).xyz;
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                 fixed3 tangentLightDir = normalize(i.lightDir);
+                fixed3 tangentViewDir = normalize(i.viewDir);
+                fixed3 tangentNormal = UnpackNormal(tex2D(_BumpMap, i.uv));
+                tangentNormal.xy *= _BumpScale;
+                tangentNormal.z = sqrt(1.0 - saturate(dot(tangentNormal.xy, tangentNormal.xy)));
+                fixed3 albedo = tex2D(_MainTex, i.uv).rgb * _Color.rgb;
+                fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz * albedo;
+                fixed3 diffuse = _LightColor0.rgb * albedo * max(0, dot(tangentNormal, tangentLightDir));
+                 fixed3 halfDir = normalize(tangentLightDir + tangentViewDir);
+                 // 获取r通道下的遮罩数据值
+                 fixed specularMask = tex2D(_SpecularMask, i.uv).r * _SpecularScale;
+                 // 混合遮罩数据
+                 fixed3 specular = _LightColor0.rgb * _Specular.rgb * pow(max(0, dot(tangentNormal, halfDir)), _Gloss) * specularMask;
+                return fixed4(ambient + diffuse + specular, 1.0);
+            }
+            ENDCG
+        }
+    } 
+    FallBack "Specular"
+}
+```
+
+## 立方体纹理
+
+在图形学中，立方体纹理是环境映射的一种实现方法。环境映射可以模拟物体周围的环境。
+
+立方体纹理一共包含了6张正方形图像，六张图像边缘连续，组成一个立方体。 
+
+立方体纹理广泛应用于天空盒，反射折射模型中，等等。
+
+### 3.8 反射
+
+反射有两种方式实现，一种是获取天空盒的立方体纹理，另一种是直接使用立方体纹理（总之都采用了对应的立方体纹理）
+
+##### 天空盒反射（摘自Unity Manual）
+
+```c
+Shader "Unlit/SkyReflection"
+{
+    SubShader
+    {
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct v2f {
+                half3 worldRefl : TEXCOORD0;
+                float4 pos : SV_POSITION;
+            };
+
+            v2f vert (float4 vertex : POSITION, float3 normal : NORMAL)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(vertex);
+                // compute world space position of the vertex
+                float3 worldPos = mul(_Object2World, vertex).xyz;
+                // compute world space view direction
+                float3 worldViewDir = normalize(UnityWorldSpaceViewDir(worldPos));
+                // world space normal
+                float3 worldNormal = UnityObjectToWorldNormal(normal);
+                // world space reflection vector
+                o.worldRefl = reflect(-worldViewDir, worldNormal);
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                // sample the default reflection cubemap, using the reflection vector
+                half4 skyData = UNITY_SAMPLE_TEXCUBE(unity_SpecCube0, i.worldRefl);
+                // decode cubemap data into actual color
+                half3 skyColor = DecodeHDR (skyData, unity_SpecCube0_HDR);
+                // output it!
+                fixed4 c = 0;
+                c.rgb = skyColor;
+                return c;
+            }
+            ENDCG
+        }
+    }
+}
+```
+
+##### 立方体纹理反射
+
+```c
+Shader "TestShader/Reflection" {
+    Properties {
+        _Color ("Color Tint", Color) = (1, 1, 1, 1)
+        _ReflectColor ("Reflection Color", Color) = (1, 1, 1, 1)
+        _ReflectAmount ("Reflect Amount", Range(0, 1)) = 1
+        _Cubemap ("Reflection Cubemap", Cube) = "_Skybox" {}
+    }
+    SubShader {
+        Tags { "RenderType"="Opaque" "Queue"="Geometry"}
+
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+            Cull Off
+            CGPROGRAM
+            #pragma multi_compile_fwdbase
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Lighting.cginc"
+            #include "AutoLight.cginc"
+
+            fixed4 _Color;
+            fixed4 _ReflectColor;
+            fixed _ReflectAmount;
+            samplerCUBE _Cubemap;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float3 worldPos : TEXCOORD0;
+                fixed3 worldNormal : TEXCOORD1;
+                fixed3 worldViewDir : TEXCOORD2;
+                fixed3 worldRefl : TEXCOORD3;
+                SHADOW_COORDS(4)
+            };
+
+            v2f vert(a2v v) {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.worldViewDir = UnityWorldSpaceViewDir(o.worldPos);
+                // 计算世界空间下的反射参数
+                o.worldRefl = reflect(-o.worldViewDir, o.worldNormal);
+                // 投射阴影
+                TRANSFER_SHADOW(o);
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                fixed3 worldNormal = normalize(i.worldNormal);
+                fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));        
+                fixed3 worldViewDir = normalize(i.worldViewDir);
+                // 设置环境光颜色
+                fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz;
+                //fixed3 ambient = ShadeSH9(fixed4(worldNormal,1));
+                // 计算漫反射光照
+                fixed3 diffuse = _LightColor0.rgb * _Color.rgb * max(0, dot(worldNormal, worldLightDir));
+                // 使用世界空间下的反射方向来映射立方体纹理
+                fixed3 reflection = texCUBE(_Cubemap, i.worldRefl).rgb * _ReflectColor.rgb;
+                // 混合阴影颜色
+                UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos);
+                // 混合最终颜色
+                fixed3 color = ambient + lerp(diffuse, reflection, _ReflectAmount) * atten;
+                return fixed4(color, 1.0);
+            }
+            ENDCG
+        }
+    }
+    FallBack "Reflective/VertexLit"
+}
+```
+
+### 3.9 折射
+
+当光线从一种介质斜射进入另一种介质时，传播方向一般会发生改变。
+
+斯涅尔定律：n1 sinθ1 = n2 sinθ2
+
+其中 n1、n2分别是两个介质的折射率。当光从介质1沿着和表面法线夹角为θ1的方向斜射入介质2时，我们可以使用上述公式计算折射光线与法线的夹角θ2
+
+下方案例均仅模拟一次折射
+
+##### 使用立方体纹理进行折射模拟
+
+```c
+Shader "TestShader/Refraction" {
 	Properties {
 		_Color ("Color Tint", Color) = (1, 1, 1, 1)
-		_MainTex ("Main Tex", 2D) = "white" {}
-		_BumpMap ("Normal Map", 2D) = "bump" {}
-		_BumpScale("Bump Scale", Float) = 1.0
-		_SpecularMask ("Specular Mask", 2D) = "white" {}
-		_SpecularScale ("Specular Scale", Range(0.0,1.0)) = 1.0
-		_Specular ("Specular", Color) = (1, 1, 1, 1)
-		_Gloss ("Gloss", Range(8.0, 256)) = 20
+		_RefractColor ("Refraction Color", Color) = (1, 1, 1, 1)
+		_RefractAmount ("Refraction Amount", Range(0, 1)) = 1
+		_RefractRatio ("Refraction Ratio", Range(0.1, 1)) = 0.5
+		_Cubemap ("Refraction Cubemap", Cube) = "_Skybox" {}
 	}
 	SubShader {
+		Tags { "RenderType"="Opaque" "Queue"="Geometry"}
 		Pass { 
 			Tags { "LightMode"="ForwardBase" }
+		
 			CGPROGRAM
+			
+			#pragma multi_compile_fwdbase	
 			#pragma vertex vert
 			#pragma fragment frag
 			
 			#include "Lighting.cginc"
+			#include "AutoLight.cginc"
 			
 			fixed4 _Color;
-			sampler2D _MainTex;
-			float4 _MainTex_ST;
-			sampler2D _BumpMap;
-			float _BumpScale;
-			sampler2D _SpecularMask;
-			float _SpecularScale;
-			fixed4 _Specular;
-			float _Gloss;
+			fixed4 _RefractColor;
+			float _RefractAmount;
+			fixed _RefractRatio;
+			samplerCUBE _Cubemap;
 			
 			struct a2v {
 				float4 vertex : POSITION;
 				float3 normal : NORMAL;
-				float4 tangent : TANGENT;
-				float4 texcoord : TEXCOORD0;
 			};
 			
 			struct v2f {
 				float4 pos : SV_POSITION;
-				float2 uv : TEXCOORD0;
-				float3 lightDir: TEXCOORD1;
-				float3 viewDir : TEXCOORD2;
+				float3 worldPos : TEXCOORD0;
+				fixed3 worldNormal : TEXCOORD1;
+				fixed3 worldViewDir : TEXCOORD2;
+				fixed3 worldRefr : TEXCOORD3;
+				SHADOW_COORDS(4)
 			};
 			
 			v2f vert(a2v v) {
 				v2f o;
 				o.pos = UnityObjectToClipPos(v.vertex);
-				o.uv.xy = v.texcoord.xy * _MainTex_ST.xy + _MainTex_ST.zw;
-				TANGENT_SPACE_ROTATION;
-				o.lightDir = mul(rotation, ObjSpaceLightDir(v.vertex)).xyz;
-				o.viewDir = mul(rotation, ObjSpaceViewDir(v.vertex)).xyz;
+				o.worldNormal = UnityObjectToWorldNormal(v.normal);
+				o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+				o.worldViewDir = UnityWorldSpaceViewDir(o.worldPos);
+				// Compute the refract dir in world space
+				o.worldRefr = refract(-normalize(o.worldViewDir), normalize(o.worldNormal), _RefractRatio);
+				TRANSFER_SHADOW(o);
+				
 				return o;
 			}
 			
 			fixed4 frag(v2f i) : SV_Target {
-			 	fixed3 tangentLightDir = normalize(i.lightDir);
-				fixed3 tangentViewDir = normalize(i.viewDir);
-				fixed3 tangentNormal = UnpackNormal(tex2D(_BumpMap, i.uv));
-				tangentNormal.xy *= _BumpScale;
-				tangentNormal.z = sqrt(1.0 - saturate(dot(tangentNormal.xy, tangentNormal.xy)));
-				fixed3 albedo = tex2D(_MainTex, i.uv).rgb * _Color.rgb;
-				fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz * albedo;
-				fixed3 diffuse = _LightColor0.rgb * albedo * max(0, dot(tangentNormal, tangentLightDir));
-			 	fixed3 halfDir = normalize(tangentLightDir + tangentViewDir);
-			 	// 获取r通道下的遮罩数据值
-			 	fixed specularMask = tex2D(_SpecularMask, i.uv).r * _SpecularScale;
-			 	// 混合遮罩数据
-			 	fixed3 specular = _LightColor0.rgb * _Specular.rgb * pow(max(0, dot(tangentNormal, halfDir)), _Gloss) * specularMask;
-				return fixed4(ambient + diffuse + specular, 1.0);
+				fixed3 worldNormal = normalize(i.worldNormal);
+				fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
+				fixed3 worldViewDir = normalize(i.worldViewDir);				
+				fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz;
+				fixed3 diffuse = _LightColor0.rgb * _Color.rgb * max(0, dot(worldNormal, worldLightDir));
+				// Use the refract dir in world space to access the cubemap
+				fixed3 refraction = texCUBE(_Cubemap, i.worldRefr).rgb * _RefractColor.rgb;
+				UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos);
+				// Mix the diffuse color with the refract color
+				fixed3 color = ambient + lerp(diffuse, refraction, _RefractAmount) * atten;
+				return fixed4(color, 1.0);
 			}
 			ENDCG
 		}
 	} 
-	FallBack "Specular"
+	FallBack "Reflective/VertexLit"
 }
+
+```
+
+##### 使用渲染纹理进行折射模拟
+
+亲手写的，附带法线纹理的转换（使用TBN矩阵），使用了上述的计算公式，渲染纹理详情见下章。效果酷似实体玻璃
+
+```c
+Shader "Unlit/TestRefractShader"
+{
+	Properties
+	{
+		_MainTex ("Texture", 2D) = "white" {}
+		_BumpMap ("Normal Map", 2D) = "bump" {}
+		_GlassColor ("Glass Color" ,COLOR) = (1,1,1,1) 
+		_ScaleTest("Scale Vertex" ,Range(0,1)) = 1
+		_TexTint("Tex Tint",Range(0.0,3.0)) = 0.0
+	}
+	SubShader
+	{
+		Tags { "RenderType"="Opaque" "Queue"="Transparent" }
+		LOD 100
+		GrabPass { "_RefractionTex2" }
+		Cull Off
+		Pass
+		{
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+			// make fog work
+			//#pragma multi_compile_fog
+			
+			#include "UnityCG.cginc"
+			sampler2D _RefractionTex2;
+			float4 _RefractionTex2_ST;
+			sampler2D _BumpMap;
+			float4 _BumpMap_ST;
+			sampler2D _MainTex;
+			float4 _MainTex_ST;
+			float4 _GlassColor;
+			float _TexTint;
+			float _ScaleTest;
+
+
+			struct a2v
+			{
+				float4 vertex : POSITION;
+				float3 normal : NORMAL;
+				float4 tangent : TANGENT;
+				float2 uv : TEXCOORD0;
+			};
+
+			struct v2f
+			{
+				float4 vertex : SV_POSITION;
+				float4 scrPos : TEXCOORD0;
+				float2 uv : TEXCOORD1;
+				half3 wNormal : TEXCOORD2;
+                half3 wTangent : TEXCOORD3;
+                half3 wBitangent : TEXCOORD4;
+				float3 worldPos : TEXCOORD5;
+				UNITY_FOG_COORDS(1)
+			};
+
+			
+			
+			v2f vert (a2v v)
+			{
+				v2f o;
+				o.vertex = UnityObjectToClipPos(v.vertex);
+				//o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+				//o.vertex = float4(o.vertex.x+(1+sin(o.vertex.x+_ScaleTest)),o.vertex.y,o.vertex.z,o.vertex.w);
+				o.scrPos = ComputeGrabScreenPos(o.vertex);
+				o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.uv = v.uv;
+                o.wTangent = UnityObjectToWorldDir(v.tangent.xyz);
+                o.wNormal = UnityObjectToWorldNormal(v.normal);
+                // compute bitangent from cross product of normal and tangent
+                // 通过计算法线与切线的叉积，得到二次切线bitangent,叉积*切线方向
+                // half tangentSign = v.tangent.w * unity_WorldTransformParams.w;
+                // output the tangent space matrix
+                half tangentSign = v.tangent.w;
+                o.wBitangent = cross(o.wNormal, o.wTangent) * tangentSign;
+				return o;
+			}
+			
+			fixed4 frag (v2f i) : SV_Target
+			{
+				fixed4 tex = tex2D(_MainTex, i.uv);
+				half3 tnormal = UnpackNormal(tex2D(_BumpMap, i.uv));
+				float3x3 TBNMatrix = float3x3(i.wTangent,i.wBitangent,i.wNormal);
+				half3 worldNormal = mul(tnormal,TBNMatrix);
+				half3 worldViewDir = UnityWorldSpaceViewDir(i.worldPos);
+
+				half3 worldRefra = refract(worldViewDir,worldNormal,_ScaleTest);
+				
+				fixed4 texTint = _TexTint*fixed4(i.vertex.z,i.vertex.z,i.vertex.z,1);
+				// sample the texture
+				float2 offset = worldRefra.xy;
+				i.scrPos.xy = offset * i.scrPos.z + i.scrPos.xy;
+				//i.scrPos.xy = tex.xy * i.scrPos.z + i.scrPos.xy;
+				fixed4 refrCol = tex2D(_RefractionTex2, i.scrPos.xy/i.scrPos.w);
+				fixed4 col = tex2D(_RefractionTex2, i.uv);
+				return refrCol*_GlassColor+tex*texTint;
+				//return tex*_TexTint;
+			}
+			ENDCG
+		}
+	}
+}
+
+
 ```
