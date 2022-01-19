@@ -4,8 +4,6 @@
 
 结合UnityShader 编写指南中的部分编码，该文档仅提供编写思路，对常用的几个渲染模型进行了编写。
 
-
-
 感谢冯乐乐的《Unity Shader入门精要》，参考书本代码的基础上，重新整理了部分代码，以及添加了些许自己的原创代码，方便各位读者查阅使用。
 
 # 0.所用数学函数
@@ -50,6 +48,10 @@
 - 如果x>b，返回b；
 - 如果x>a且x<b，返回x
 - 参数：x输入变量，a，b为参考量，且a < b。
+
+#### pow(a,b)
+
+- 功能：返回a的b次方
 
 #### smoothstep(min,max,x)
 
@@ -780,7 +782,7 @@ Shader "ShaderTest/Shadow" {
 }
 ```
 
-# 3. 纹理篇
+# 3. 标准纹理篇
 
 ###### tex2D(sampler2D,Vector2)
 
@@ -1328,79 +1330,78 @@ Shader "TestShader/Reflection" {
 
 ```c
 Shader "TestShader/Refraction" {
-	Properties {
-		_Color ("Color Tint", Color) = (1, 1, 1, 1)
-		_RefractColor ("Refraction Color", Color) = (1, 1, 1, 1)
-		_RefractAmount ("Refraction Amount", Range(0, 1)) = 1
-		_RefractRatio ("Refraction Ratio", Range(0.1, 1)) = 0.5
-		_Cubemap ("Refraction Cubemap", Cube) = "_Skybox" {}
-	}
-	SubShader {
-		Tags { "RenderType"="Opaque" "Queue"="Geometry"}
-		Pass { 
-			Tags { "LightMode"="ForwardBase" }
-		
-			CGPROGRAM
-			
-			#pragma multi_compile_fwdbase	
-			#pragma vertex vert
-			#pragma fragment frag
-			
-			#include "Lighting.cginc"
-			#include "AutoLight.cginc"
-			
-			fixed4 _Color;
-			fixed4 _RefractColor;
-			float _RefractAmount;
-			fixed _RefractRatio;
-			samplerCUBE _Cubemap;
-			
-			struct a2v {
-				float4 vertex : POSITION;
-				float3 normal : NORMAL;
-			};
-			
-			struct v2f {
-				float4 pos : SV_POSITION;
-				float3 worldPos : TEXCOORD0;
-				fixed3 worldNormal : TEXCOORD1;
-				fixed3 worldViewDir : TEXCOORD2;
-				fixed3 worldRefr : TEXCOORD3;
-				SHADOW_COORDS(4)
-			};
-			
-			v2f vert(a2v v) {
-				v2f o;
-				o.pos = UnityObjectToClipPos(v.vertex);
-				o.worldNormal = UnityObjectToWorldNormal(v.normal);
-				o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
-				o.worldViewDir = UnityWorldSpaceViewDir(o.worldPos);
-				// Compute the refract dir in world space
-				o.worldRefr = refract(-normalize(o.worldViewDir), normalize(o.worldNormal), _RefractRatio);
-				TRANSFER_SHADOW(o);
-				
-				return o;
-			}
-			
-			fixed4 frag(v2f i) : SV_Target {
-				fixed3 worldNormal = normalize(i.worldNormal);
-				fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
-				fixed3 worldViewDir = normalize(i.worldViewDir);				
-				fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz;
-				fixed3 diffuse = _LightColor0.rgb * _Color.rgb * max(0, dot(worldNormal, worldLightDir));
-				// Use the refract dir in world space to access the cubemap
-				fixed3 refraction = texCUBE(_Cubemap, i.worldRefr).rgb * _RefractColor.rgb;
-				UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos);
-				// Mix the diffuse color with the refract color
-				fixed3 color = ambient + lerp(diffuse, refraction, _RefractAmount) * atten;
-				return fixed4(color, 1.0);
-			}
-			ENDCG
-		}
-	} 
-	FallBack "Reflective/VertexLit"
-}
+    Properties {
+        _Color ("Color Tint", Color) = (1, 1, 1, 1)
+        _RefractColor ("Refraction Color", Color) = (1, 1, 1, 1)
+        _RefractAmount ("Refraction Amount", Range(0, 1)) = 1
+        _RefractRatio ("Refraction Ratio", Range(0.1, 1)) = 0.5
+        _Cubemap ("Refraction Cubemap", Cube) = "_Skybox" {}
+    }
+    SubShader {
+        Tags { "RenderType"="Opaque" "Queue"="Geometry"}
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
 
+            CGPROGRAM
+
+            #pragma multi_compile_fwdbase    
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "Lighting.cginc"
+            #include "AutoLight.cginc"
+
+            fixed4 _Color;
+            fixed4 _RefractColor;
+            float _RefractAmount;
+            fixed _RefractRatio;
+            samplerCUBE _Cubemap;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float3 worldPos : TEXCOORD0;
+                fixed3 worldNormal : TEXCOORD1;
+                fixed3 worldViewDir : TEXCOORD2;
+                fixed3 worldRefr : TEXCOORD3;
+                SHADOW_COORDS(4)
+            };
+
+            v2f vert(a2v v) {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.worldViewDir = UnityWorldSpaceViewDir(o.worldPos);
+                // Compute the refract dir in world space
+                o.worldRefr = refract(-normalize(o.worldViewDir), normalize(o.worldNormal), _RefractRatio);
+                TRANSFER_SHADOW(o);
+
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                fixed3 worldNormal = normalize(i.worldNormal);
+                fixed3 worldLightDir = normalize(UnityWorldSpaceLightDir(i.worldPos));
+                fixed3 worldViewDir = normalize(i.worldViewDir);                
+                fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT.xyz;
+                fixed3 diffuse = _LightColor0.rgb * _Color.rgb * max(0, dot(worldNormal, worldLightDir));
+                // Use the refract dir in world space to access the cubemap
+                fixed3 refraction = texCUBE(_Cubemap, i.worldRefr).rgb * _RefractColor.rgb;
+                UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos);
+                // Mix the diffuse color with the refract color
+                fixed3 color = ambient + lerp(diffuse, refraction, _RefractAmount) * atten;
+                return fixed4(color, 1.0);
+            }
+            ENDCG
+        }
+    } 
+    FallBack "Reflective/VertexLit"
+}
 ```
 
 ##### 使用渲染纹理进行折射模拟
@@ -1410,70 +1411,70 @@ Shader "TestShader/Refraction" {
 ```c
 Shader "Unlit/TestRefractShader"
 {
-	Properties
-	{
-		_MainTex ("Texture", 2D) = "white" {}
-		_BumpMap ("Normal Map", 2D) = "bump" {}
-		_GlassColor ("Glass Color" ,COLOR) = (1,1,1,1) 
-		_ScaleTest("Scale Vertex" ,Range(0,1)) = 1
-		_TexTint("Tex Tint",Range(0.0,3.0)) = 0.0
-	}
-	SubShader
-	{
-		Tags { "RenderType"="Opaque" "Queue"="Transparent" }
-		LOD 100
-		GrabPass { "_RefractionTex2" }
-		Cull Off
-		Pass
-		{
-			CGPROGRAM
-			#pragma vertex vert
-			#pragma fragment frag
-			// make fog work
-			//#pragma multi_compile_fog
-			
-			#include "UnityCG.cginc"
-			sampler2D _RefractionTex2;
-			float4 _RefractionTex2_ST;
-			sampler2D _BumpMap;
-			float4 _BumpMap_ST;
-			sampler2D _MainTex;
-			float4 _MainTex_ST;
-			float4 _GlassColor;
-			float _TexTint;
-			float _ScaleTest;
+    Properties
+    {
+        _MainTex ("Texture", 2D) = "white" {}
+        _BumpMap ("Normal Map", 2D) = "bump" {}
+        _GlassColor ("Glass Color" ,COLOR) = (1,1,1,1) 
+        _ScaleTest("Scale Vertex" ,Range(0,1)) = 1
+        _TexTint("Tex Tint",Range(0.0,3.0)) = 0.0
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "Queue"="Transparent" }
+        LOD 100
+        GrabPass { "_RefractionTex2" }
+        Cull Off
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            // make fog work
+            //#pragma multi_compile_fog
+
+            #include "UnityCG.cginc"
+            sampler2D _RefractionTex2;
+            float4 _RefractionTex2_ST;
+            sampler2D _BumpMap;
+            float4 _BumpMap_ST;
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+            float4 _GlassColor;
+            float _TexTint;
+            float _ScaleTest;
 
 
-			struct a2v
-			{
-				float4 vertex : POSITION;
-				float3 normal : NORMAL;
-				float4 tangent : TANGENT;
-				float2 uv : TEXCOORD0;
-			};
+            struct a2v
+            {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                float4 tangent : TANGENT;
+                float2 uv : TEXCOORD0;
+            };
 
-			struct v2f
-			{
-				float4 vertex : SV_POSITION;
-				float4 scrPos : TEXCOORD0;
-				float2 uv : TEXCOORD1;
-				half3 wNormal : TEXCOORD2;
+            struct v2f
+            {
+                float4 vertex : SV_POSITION;
+                float4 scrPos : TEXCOORD0;
+                float2 uv : TEXCOORD1;
+                half3 wNormal : TEXCOORD2;
                 half3 wTangent : TEXCOORD3;
                 half3 wBitangent : TEXCOORD4;
-				float3 worldPos : TEXCOORD5;
-				UNITY_FOG_COORDS(1)
-			};
+                float3 worldPos : TEXCOORD5;
+                UNITY_FOG_COORDS(1)
+            };
 
-			
-			
-			v2f vert (a2v v)
-			{
-				v2f o;
-				o.vertex = UnityObjectToClipPos(v.vertex);
-				//o.uv = TRANSFORM_TEX(v.uv, _MainTex);
-				//o.vertex = float4(o.vertex.x+(1+sin(o.vertex.x+_ScaleTest)),o.vertex.y,o.vertex.z,o.vertex.w);
-				o.scrPos = ComputeGrabScreenPos(o.vertex);
-				o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+
+
+            v2f vert (a2v v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                //o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                //o.vertex = float4(o.vertex.x+(1+sin(o.vertex.x+_ScaleTest)),o.vertex.y,o.vertex.z,o.vertex.w);
+                o.scrPos = ComputeGrabScreenPos(o.vertex);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
                 o.uv = v.uv;
                 o.wTangent = UnityObjectToWorldDir(v.tangent.xyz);
                 o.wNormal = UnityObjectToWorldNormal(v.normal);
@@ -1483,33 +1484,272 @@ Shader "Unlit/TestRefractShader"
                 // output the tangent space matrix
                 half tangentSign = v.tangent.w;
                 o.wBitangent = cross(o.wNormal, o.wTangent) * tangentSign;
-				return o;
-			}
-			
-			fixed4 frag (v2f i) : SV_Target
-			{
-				fixed4 tex = tex2D(_MainTex, i.uv);
-				half3 tnormal = UnpackNormal(tex2D(_BumpMap, i.uv));
-				float3x3 TBNMatrix = float3x3(i.wTangent,i.wBitangent,i.wNormal);
-				half3 worldNormal = mul(tnormal,TBNMatrix);
-				half3 worldViewDir = UnityWorldSpaceViewDir(i.worldPos);
+                return o;
+            }
 
-				half3 worldRefra = refract(worldViewDir,worldNormal,_ScaleTest);
-				
-				fixed4 texTint = _TexTint*fixed4(i.vertex.z,i.vertex.z,i.vertex.z,1);
-				// sample the texture
-				float2 offset = worldRefra.xy;
-				i.scrPos.xy = offset * i.scrPos.z + i.scrPos.xy;
-				//i.scrPos.xy = tex.xy * i.scrPos.z + i.scrPos.xy;
-				fixed4 refrCol = tex2D(_RefractionTex2, i.scrPos.xy/i.scrPos.w);
-				fixed4 col = tex2D(_RefractionTex2, i.uv);
-				return refrCol*_GlassColor+tex*texTint;
-				//return tex*_TexTint;
-			}
-			ENDCG
-		}
-	}
+            fixed4 frag (v2f i) : SV_Target
+            {
+                fixed4 tex = tex2D(_MainTex, i.uv);
+                half3 tnormal = UnpackNormal(tex2D(_BumpMap, i.uv));
+                float3x3 TBNMatrix = float3x3(i.wTangent,i.wBitangent,i.wNormal);
+                half3 worldNormal = mul(tnormal,TBNMatrix);
+                half3 worldViewDir = UnityWorldSpaceViewDir(i.worldPos);
+
+                half3 worldRefra = refract(worldViewDir,worldNormal,_ScaleTest);
+
+                fixed4 texTint = _TexTint*fixed4(i.vertex.z,i.vertex.z,i.vertex.z,1);
+                // sample the texture
+                float2 offset = worldRefra.xy;
+                i.scrPos.xy = offset * i.scrPos.z + i.scrPos.xy;
+                //i.scrPos.xy = tex.xy * i.scrPos.z + i.scrPos.xy;
+                fixed4 refrCol = tex2D(_RefractionTex2, i.scrPos.xy/i.scrPos.w);
+                fixed4 col = tex2D(_RefractionTex2, i.uv);
+                return refrCol*_GlassColor+tex*texTint;
+                //return tex*_TexTint;
+            }
+            ENDCG
+        }
+    }
 }
+```
+
+### 3.10 菲涅尔反射
+
+真实世界的菲涅尔等式是非常复杂的，实时渲染中，通常会使用一些近似公式来计算。
+
+##### Schlick菲涅尔近似等式
+
+F (v,n) = F0 + ( 1 - F0 ) ( 1 - v · n ) ^ 5
+
+##### Empricial菲涅尔近似等式 ( bias,scale,power是控制项 )
+
+F (v,n) = max( 0 , min ( 1,  bias + scale * ( 1 - v · n ) ^ power) ) 
+
+schlick菲涅尔示例
+
+```c
+Shader "Unlit/TestFresnelShader"
+{
+    Properties {
+        _Color ("Color Tint", Color) = (0, 0, 0, 1)
+        _ReflectColor ("Reflect Color",Color) = (0, 0, 1, 1)
+        _FresnelScale ("Fresnel Scale", Range(0, 1)) = 0.5
+    }
+    SubShader {
+        Tags { "RenderType"="Opaque" "Queue"="Geometry"}
+
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+            CGPROGRAM
+            #pragma multi_compile_fwdbase
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "UnityCG.cginc"
+
+            fixed4 _Color;
+            fixed4 _ReflectColor;
+            fixed _FresnelScale;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float3 worldPos : TEXCOORD0;
+                  fixed3 worldNormal : TEXCOORD1;
+                  fixed3 worldViewDir : TEXCOORD2;
+            };
+
+            v2f vert(a2v v) {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.worldViewDir = UnityWorldSpaceViewDir(o.worldPos);
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                fixed3 worldNormal = normalize(i.worldNormal);
+                fixed3 worldViewDir = normalize(i.worldViewDir);
+                fixed3 ambient = ShadeSH9(fixed4(i.worldNormal,1));
+                fixed3 reflection = _ReflectColor.rgb;
+                fixed fresnel = _FresnelScale + (1 - _FresnelScale) * pow(1 - dot(worldViewDir, worldNormal), 5);
+                fixed3 diffuse = _Color.rgb;
+                fixed3 color = ambient + lerp(diffuse, reflection, saturate(fresnel));
+                return fixed4(color, 1.0);
+            }
+            ENDCG
+        }
+    } 
+    FallBack "Reflective/VertexLit"
+}
+```
+
+Empricial 菲涅尔示例
+
+```c
+Shader "Unlit/TestFresnelShader"
+{
+    Properties {
+        _Color ("Color Tint", Color) = (0, 0, 0, 1)
+        _ReflectColor ("Reflect Color",Color) = (0, 0, 1, 1)
+        _FresnelScale ("Fresnel Scale", Range(0, 1)) = 1
+        _FresnelBias ("Bias", Range(0, 1)) = 0
+        _FresnelPower ("Power", Range(0, 5)) = 3
+    }
+    SubShader {
+        Tags { "RenderType"="Opaque" "Queue"="Geometry"}
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+            CGPROGRAM
+            #pragma multi_compile_fwdbase
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "UnityCG.cginc"
+
+            fixed4 _Color;
+            fixed4 _ReflectColor;
+            fixed _FresnelScale;
+            float _FresnelBias;
+            int _FresnelPower;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float3 worldPos : TEXCOORD0;
+                  fixed3 worldNormal : TEXCOORD1;
+                  fixed3 worldViewDir : TEXCOORD2;
+            };
+
+            v2f vert(a2v v) {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.worldViewDir = UnityWorldSpaceViewDir(o.worldPos);
+                return o;
+            }
+
+            fixed4 frag(v2f i) : SV_Target {
+                fixed3 worldNormal = normalize(i.worldNormal);
+                fixed3 worldViewDir = normalize(i.worldViewDir);
+                fixed3 ambient = ShadeSH9(fixed4(i.worldNormal,1));
+                fixed3 reflection = _ReflectColor.rgb;
+                //fixed fresnel = _FresnelScale + (1 - _FresnelScale) * pow(1 - dot(worldViewDir, worldNormal), 5);
+                fixed fresnel = max(0,min(1,_FresnelBias+_FresnelScale * pow(1 - dot(worldViewDir, worldNormal),_FresnelPower)));
+                fixed3 diffuse = _Color.rgb;
+                fixed3 color = ambient + lerp(diffuse, reflection, saturate(fresnel));
+                return fixed4(color, 1.0);
+            }
+            ENDCG
+        }
+    } 
+    FallBack "Reflective/VertexLit"
+}
+```
+
+# 4. 系统内置纹理篇
+
+## 渲染纹理
+
+现代的GPU允许我们吧整个三维场景渲染到一个中间缓冲中，即渲染目标纹理。
+
+与之相关的是 多重渲染目标 这种技术指的是GPU允许我们吧场景同事渲染到多个渲染目标纹理中，不再需要为每个渲染目标纹理单独渲染完整的场景。延迟渲染就是使用多重渲染目标的一个应用。
+
+unity为渲染目标纹理定义了一种专门的纹理类型----渲染纹理。在Unity中使用渲染纹理通常有两种方式：
+
+1.在Project面板下创建一个RenderTexture，通过场景中的Camera的渲染目标设置成该渲染纹理。
+
+2.屏幕后处理时，使用GrabPass命令或OnRenderImage函数来获取当前屏幕图像。
 
 
+
+### 4.1 使用RenderTexture
+
+1.在Project面板下，右键 -> Create -> Render Texture ，并且起对应的名字
+
+2.在Hierarchy面板下，右键创建一个Camera，并把Target Texture设置成上一步创建的Render Texture
+
+3.创建一个Material，使用第一步创建的RenderTexture作为主颜色纹理。
+
+4.在场景中的物体上赋予该Material，查看效果。
+
+
+
+### 4.2 使用GrabPass
+
+下方使用了两行代码完成了屏幕的抓取，分别是
+
+GrabPass{}、fixed4 refrCol = tex2D(_RefractionTex, i.uv);
+
+但此时我们会发现，抓取屏幕会陷入一个连续抓取的死循环中，这种错误的结果需要进行相关处理后才能使用。设置渲染顺序为Transparent，可以使得抓取屏幕时，确保其他不透明物体已经被渲染到屏幕上了，屏幕抓取不会陷入连续抓取的死循环中。
+
+```c
+Shader "Unlit/GrabPassShader1"
+{
+    Properties
+    {
+        _MainTex ("Texture", 2D) = "white" {}
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "Queue"="Transparent" }
+        LOD 100
+        // 在当前位置声明Grabpass,如果不使用名字的话，每一个使用该
+        // shader的物体都会单独进行一次昂贵的屏幕抓取操作。
+        // 使用名字的话，Unity只会执行一次抓取工作，但也意味着所有物体都会
+        // 使用一张屏幕图像，大多数情况下是够用的。
+        // GrabPass {}
+        GrabPass { "_RefractionTex" }
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+            sampler2D _RefractionTex;
+            float4 _RefractionTex_TexelSize;
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 vertex : SV_POSITION;
+            };
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                // sample the texture
+                // 将抓取到的图像展示出来
+                fixed4 refrCol = tex2D(_RefractionTex, i.uv);
+                return refrCol;
+            }
+            ENDCG
+        }
+    }
+}
 ```
