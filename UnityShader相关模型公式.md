@@ -1671,8 +1671,6 @@ unity为渲染目标纹理定义了一种专门的纹理类型----渲染纹理�
 
 2.屏幕后处理时，使用GrabPass命令或OnRenderImage函数来获取当前屏幕图像。
 
-
-
 ### 4.1 使用RenderTexture
 
 1.在Project面板下，右键 -> Create -> Render Texture ，并且起对应的名字
@@ -1682,8 +1680,6 @@ unity为渲染目标纹理定义了一种专门的纹理类型----渲染纹理�
 3.创建一个Material，使用第一步创建的RenderTexture作为主颜色纹理。
 
 4.在场景中的物体上赋予该Material，查看效果。
-
-
 
 ### 4.2 使用GrabPass
 
@@ -1696,10 +1692,7 @@ GrabPass{}、fixed4 refrCol = tex2D(_RefractionTex, i.uv);
 ```c
 Shader "Unlit/GrabPassShader1"
 {
-    Properties
-    {
-        _MainTex ("Texture", 2D) = "white" {}
-    }
+    Properties {}
     SubShader
     {
         Tags { "RenderType"="Opaque" "Queue"="Transparent" }
@@ -1716,8 +1709,6 @@ Shader "Unlit/GrabPassShader1"
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
-            sampler2D _MainTex;
-            float4 _MainTex_ST;
             sampler2D _RefractionTex;
             float4 _RefractionTex_TexelSize;
 
@@ -1737,7 +1728,7 @@ Shader "Unlit/GrabPassShader1"
             {
                 v2f o;
                 o.vertex = UnityObjectToClipPos(v.vertex);
-                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                o.uv = v.uv;
                 return o;
             }
 
@@ -1753,3 +1744,164 @@ Shader "Unlit/GrabPassShader1"
     }
 }
 ```
+
+### 4.3 使用 GrabPass 实现透明效果
+
+ComputeGrabScreenPos(vertex)
+
+该函数与1.7中的ComputeScreenPos函数基本类似，最大的不同是针对平台差异造成的采样坐标问题进行了处理。
+
+使用上述函数获得片元在屏幕上的像素位置时，通常需要两个步骤：
+
+第一步，把ComputeScreenPos的结果保存到scrPos中。
+
+第二步，用scrPos.xy除以scrPos.w得到视口空间中的坐标。
+
+```c
+Shader "Unlit/GrabPassShader2"
+{
+    Properties
+    {
+        _Color ("Texture", COLOR) = (1,1,1,1)
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "Queue"="Transparent" }
+        LOD 100
+        GrabPass { "_RefractionTex" }
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "UnityCG.cginc"
+
+            fixed4 _Color;
+            sampler2D _RefractionTex;
+            float4 _RefractionTex_TexelSize;
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 vertex : SV_POSITION;
+                float4 scrPos : TEXCOORD1;
+            };
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.uv = v.uv;
+                o.scrPos = ComputeGrabScreenPos(o.vertex);
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                // sample the texture
+                //fixed4 refrCol = tex2D(_RefractionTex,i.uv);
+                fixed4 refrCol = tex2D(_RefractionTex,i.scrPos.xy/i.scrPos.w);
+                return refrCol+_Color*0.2;
+            }
+            ENDCG
+        }
+    }
+}
+```
+
+如果想修改画面使之产生相应的扭曲效果，以及通过透明图像产生折射效果，可以参考3.9折射篇，使用渲染纹理模拟折射效果其中的代码。部分爆炸特效的空气扭曲，可以通过法线纹理+折射模型实现的。
+
+## 深度纹理
+
+深度纹理实际就是一张渲染纹理，只不过它里面存储的像素值不是颜色值，而是一个高精度的深度值。
+
+深度纹理中的深度值范围是（0,1），而且通常是非线性分布的。
+
+获取深度纹理是非常简单的，可以通过下面的代码来获取深度纹理
+
+camera.depthTextureMode = DepthTextureMode.Depth;
+
+在shader中，我们仅仅需要声明以下变量便可使用
+
+sampler2D _CameraDepthTexture;
+
+如果想查看深度纹理，可以使用FrameDebugger 
+
+Window -> Analysis ->FrameDebugger 中，Open可以查看渲染细节。
+
+下方是一个深度纹理获取后，将深度纹理变为可视化的渲染器示例
+
+```c
+Shader "Unlit/DepthShader1"
+{
+	Properties
+	{
+		_DepthScale("DepthData",Float) = 0.1
+	}
+	SubShader
+	{
+		Tags { "RenderType"="Opaque" "Queue"="Transparent" }
+		LOD 100
+		Pass
+		{
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+			
+			#include "UnityCG.cginc"
+
+			sampler2D _CameraDepthTexture;
+			float _DepthScale;
+
+			struct appdata
+			{
+				float4 vertex : POSITION;
+				float2 uv : TEXCOORD0;
+			};
+
+			struct v2f
+			{
+				float2 uv : TEXCOORD0;
+				float4 vertex : SV_POSITION;
+				float4 scrPos : TEXCOORD1;
+			};
+			
+			v2f vert (appdata v)
+			{
+				v2f o;
+				o.vertex = UnityObjectToClipPos(v.vertex);
+				o.uv = v.uv;
+				o.scrPos = ComputeGrabScreenPos(o.vertex);
+				return o;
+			}
+			
+			fixed4 frag (v2f i) : SV_Target
+			{
+				// sample the texture
+				fixed4 refrCol = tex2D(_CameraDepthTexture, i.scrPos.xy/i.scrPos.w);
+				float depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, i.uv);
+				// 解码深度纹理，输出线性深度值
+                float linearDepth = LinearEyeDepth(refrCol.r);
+				// 通过减去屏幕深度，获取正确的深度颜色（深度值越高，越白，反之则黑）
+                float diff = linearDepth - i.scrPos.w;
+                // 通过翻转颜色，使得深度值越深的值越低，并在深度纹理上添加系数调整。
+				fixed4 intersect = fixed4(1,1,1,1)-fixed4(diff*_DepthScale,diff*_DepthScale,diff*_DepthScale,1);
+				fixed4 border = saturate(intersect);
+				return border;
+			}
+			ENDCG
+		}
+	}
+}
+
+
+```
+
+深度纹理的进阶应用，可以参考本人在同项目中的另一篇文章，卡通着色器全解析。
