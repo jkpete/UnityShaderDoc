@@ -1841,67 +1841,65 @@ Window -> Analysis ->FrameDebugger 中，Open可以查看渲染细节。
 ```c
 Shader "Unlit/DepthShader1"
 {
-	Properties
-	{
-		_DepthScale("DepthData",Float) = 0.1
-	}
-	SubShader
-	{
-		Tags { "RenderType"="Opaque" "Queue"="Transparent" }
-		LOD 100
-		Pass
-		{
-			CGPROGRAM
-			#pragma vertex vert
-			#pragma fragment frag
-			
-			#include "UnityCG.cginc"
+    Properties
+    {
+        _DepthScale("DepthData",Float) = 0.1
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "Queue"="Transparent" }
+        LOD 100
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
 
-			sampler2D _CameraDepthTexture;
-			float _DepthScale;
+            #include "UnityCG.cginc"
 
-			struct appdata
-			{
-				float4 vertex : POSITION;
-				float2 uv : TEXCOORD0;
-			};
+            sampler2D _CameraDepthTexture;
+            float _DepthScale;
 
-			struct v2f
-			{
-				float2 uv : TEXCOORD0;
-				float4 vertex : SV_POSITION;
-				float4 scrPos : TEXCOORD1;
-			};
-			
-			v2f vert (appdata v)
-			{
-				v2f o;
-				o.vertex = UnityObjectToClipPos(v.vertex);
-				o.uv = v.uv;
-				o.scrPos = ComputeGrabScreenPos(o.vertex);
-				return o;
-			}
-			
-			fixed4 frag (v2f i) : SV_Target
-			{
-				// sample the texture
-				fixed4 refrCol = tex2D(_CameraDepthTexture, i.scrPos.xy/i.scrPos.w);
-				float depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, i.uv);
-				// 解码深度纹理，输出线性深度值
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 vertex : SV_POSITION;
+                float4 scrPos : TEXCOORD1;
+            };
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.uv = v.uv;
+                o.scrPos = ComputeGrabScreenPos(o.vertex);
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                // sample the texture
+                fixed4 refrCol = tex2D(_CameraDepthTexture, i.scrPos.xy/i.scrPos.w);
+                float depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, i.uv);
+                // 解码深度纹理，输出线性深度值
                 float linearDepth = LinearEyeDepth(refrCol.r);
-				// 通过减去屏幕深度，获取正确的深度颜色（深度值越高，越白，反之则黑）
+                // 通过减去屏幕深度，获取正确的深度颜色（深度值越高，越白，反之则黑）
                 float diff = linearDepth - i.scrPos.w;
                 // 通过翻转颜色，使得深度值越深的值越低，并在深度纹理上添加系数调整。
-				fixed4 intersect = fixed4(1,1,1,1)-fixed4(diff*_DepthScale,diff*_DepthScale,diff*_DepthScale,1);
-				fixed4 border = saturate(intersect);
-				return border;
-			}
-			ENDCG
-		}
-	}
+                fixed4 intersect = fixed4(1,1,1,1)-fixed4(diff*_DepthScale,diff*_DepthScale,diff*_DepthScale,1);
+                fixed4 border = saturate(intersect);
+                return border;
+            }
+            ENDCG
+        }
+    }
 }
-
-
 ```
 
 深度纹理的进阶应用，可以参考本人在同项目中的另一篇文章，卡通着色器全解析。
