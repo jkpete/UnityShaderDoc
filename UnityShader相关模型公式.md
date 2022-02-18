@@ -1902,4 +1902,98 @@ Shader "Unlit/DepthShader1"
 }
 ```
 
-深度纹理的进阶应用，可以参考本人在同项目中的另一篇文章，卡通着色器全解析。
+深度纹理的进阶应用，可以参考本人在同项目中的另一篇文章，卡通水体着色器全解析。
+
+由于法线纹理的获取涉及到c#代码，后续会放在屏幕后期处理中详细讲解。
+
+# 5. 顶点公式篇
+
+### 5.1 广告牌技术
+
+广告牌技术会根据视角方向来旋转一个被纹理着色的多边形，使得多边形看起来总是面对着摄像机。广告牌技术被用于很多应用，例如闪光，烟雾，护盾，云朵，草地等等。
+
+广告牌技术的本质就是构建旋转矩阵，而我们知道一个变换矩阵需要3个基向量。广告牌技术使用的基向量通常就是表面法线、指向上的方向、以及指向有的方向。除此之外，还需要制定一个锚点，这个锚点在旋转过程中是固定不变的，以此来确定多边形在空间中的位置。
+
+#### 广告牌技术计算过程
+
+初始计算得到目标的表面法线和指向上的方向，而两者往往是不垂直的。但是，两者其中之一是固定的，例如模拟草丛时，我们希望广告牌指向上的方向永远是（0,1,0），而法线方向应该随视角变化；当模拟粒子效果时，我们希望广告牌的法线方向是固定的，即总是指向视角方向，指向上的方向则可以发生变化。
+
+我们假设法线方向是固定的，首先，我们根据初始的表面法线和指向上的方向来计算出目标方向的指向右的方向。通过叉积操作
+
+right = up × normal
+
+对其归一化后，再由法线方向和指向右的方向计算出正交的指向上的方向即可
+
+up‘ = normal × right
+
+至此，我们就可以得到用于旋转的3个正交基了（right，up，normal）。实现代码如下
+
+```c
+Shader "TestShader/Billboard" {
+    Properties {
+        _MainTex ("Main Tex", 2D) = "white" {}
+        _Color ("Color Tint", Color) = (1, 1, 1, 1)
+        _VerticalBillboarding ("Vertical Restraints", Range(0, 1)) = 1 
+    }
+    SubShader {
+        // 需要取消对该shader的批处理操作，"DisableBatching"="True"
+        Tags {"Queue"="Transparent" "IgnoreProjector"="True" "RenderType"="Transparent" "DisableBatching"="True"}
+
+        Pass { 
+            Tags { "LightMode"="ForwardBase" }
+
+            ZWrite Off
+            Blend SrcAlpha OneMinusSrcAlpha
+            Cull Off
+
+            CGPROGRAM
+
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "Lighting.cginc"
+            //
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+            fixed4 _Color;
+            fixed _VerticalBillboarding;
+
+            struct a2v {
+                float4 vertex : POSITION;
+                float4 texcoord : TEXCOORD0;
+            };
+
+            struct v2f {
+                float4 pos : SV_POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            v2f vert (a2v v) {
+                v2f o;
+                float3 center = float3(0, 0, 0);
+                float3 viewer = mul(unity_WorldToObject,float4(_WorldSpaceCameraPos, 1));
+                float3 normalDir = viewer - center;
+                normalDir.y =normalDir.y * _VerticalBillboarding;
+                normalDir = normalize(normalDir);
+                float3 upDir = abs(normalDir.y) > 0.999 ? float3(0, 0, 1) : float3(0, 1, 0);
+                float3 rightDir = normalize(cross(upDir, normalDir));
+                upDir = normalize(cross(normalDir, rightDir));
+                float3 centerOffs = v.vertex.xyz - center;
+                float3 localPos = center + rightDir * centerOffs.x + upDir * centerOffs.y + normalDir * centerOffs.z;
+                o.pos = UnityObjectToClipPos(float4(localPos, 1));
+                o.uv = TRANSFORM_TEX(v.texcoord,_MainTex);
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target {
+                fixed4 c = tex2D (_MainTex, i.uv);
+                c.rgb *= _Color.rgb;
+                return c;
+            }
+
+            ENDCG
+        }
+    } 
+    FallBack "Transparent/VertexLit"
+}
+```
