@@ -423,3 +423,144 @@ public class ImageScannerEffect : PostEffectsBase
 添加图片遮罩，根据法线纹理生成网格纹理等等我们后续会接着讲。
 
 ![avatar](./img/ImageEffect/DepthTexture8.gif)
+
+## 3.纹理附加：扫描效果探究（续）
+
+在上图中，我们由于为对插值处理进行相关优化，所以在尾部会出现一些黑色的部分，这些黑色的部分是因为原本的图像是呈现黑色的。
+
+这次我们使用一张附加纹理，使得扫描效果更具科技感一些
+
+这次是我们使用的附加纹理原图
+
+![avatar](./img/ImageEffect/net7.jpg)
+
+在使用上述图片之前，我们需要了解uv转换函数TRANSFORM_TEX
+
+TRANSFORM_TEX方法比较简单，就是将模型顶点的uv和Tiling、Offset两个变量进行运算，计算出实际显示用的定点uv。
+
+如果对_MaskTex这个纹理进行uv转换，必须声明变量_MaskTex_ST(float4类型)
+
+实际调整的时候，_MaskTex_ST.xy代表Tilling（缩放程度），_MaskTex_ST.zw代表Offset（偏移程度）
+
+我们在声明变量的时候，沿用_MaskTex的同时下方添加一个ST的声明即可
+
+```cpp
+sampler2D _MaskTex;
+float4 _MaskTex_ST;
+float _MaskTexTillY;
+```
+
+片元着色器
+
+```cpp
+_MaskTex_ST.y = _MaskTexTillY;
+i.uv = TRANSFORM_TEX(i.uv, _MaskTex);
+fixed4 maskTex = tex2D(_MaskTex,i.uv);
+```
+
+在附加纹理时，可以通过两种方式进行，一种是附加法，一种是累乘法
+
+我们这里使用了带颜色的附加法进行（因为包含了黑色，原本是黑色的部分就不会变化）
+
+同样的，我们在原本的基础上使用了_DepthColor.a 作为底图的影响程度，这样可以淡化尾部的黑色部分。
+
+```cpp
+fixed4 final = lerp(mainTex,saturate(border*_DepthColor+mainTex*_DepthColor.a+maskTex*_DepthColor),saturate(border));
+```
+
+改写完shader后，在cs脚本中添加以下内容即可
+
+```csharp
+public Texture dataTex;
+public float tillY;
+```
+
+OnRenderImage函数中
+
+```csharp
+material.SetTexture("_MaskTex", dataTex);
+material.SetFloat("_MaskTexTillY", tillY);
+```
+
+shader完整代码
+
+```c
+Shader "Hidden/ExampleScannerImage"
+{
+	Properties
+	{
+		_MainTex ("Texture", 2D) = "white" {}
+		_MaskTex("Mask Texture", 2D) = "white" {}
+		_MaskTexTillY("Till Y",Float) = 1.0
+		_DepthParam ("DepthParam",Float) = 1.0
+		_DepthColor("DepthColor",Color) = (1,1,1,1)
+		_DepthLength ("DepthLength",Float) = 1.0
+	}
+	SubShader
+	{
+		// No culling or depth
+		Cull Off ZWrite Off ZTest Always
+
+		Pass
+		{
+			CGPROGRAM
+			#pragma vertex vert
+			#pragma fragment frag
+			#include "UnityCG.cginc"
+
+			sampler2D _MainTex;
+			sampler2D _CameraDepthTexture;
+			sampler2D _MaskTex;
+			float4 _MaskTex_ST;
+			float _MaskTexTillY;
+			float _DepthParam;
+			fixed4 _DepthColor;
+			float _DepthLength;
+
+			struct appdata
+			{
+				float4 vertex : POSITION;
+				float2 uv : TEXCOORD0;
+			};
+
+			struct v2f
+			{
+				float2 uv : TEXCOORD0;
+				float4 vertex : SV_POSITION;
+			};
+
+			v2f vert (appdata v)
+			{
+				v2f o;
+				o.vertex = UnityObjectToClipPos(v.vertex);
+				o.uv = v.uv;
+				return o;
+			}
+
+			fixed4 frag (v2f i) : SV_Target
+			{
+				fixed4 mainTex = tex2D(_MainTex, i.uv);
+				float depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture,i.uv);
+				float linearDepth = LinearEyeDepth(depth.r);
+				float diff = linearDepth-_DepthParam;
+				fixed4 border = 1-(saturate(floor(diff))+saturate(-diff*_DepthLength));
+				
+				_MaskTex_ST.y = _MaskTexTillY;
+				i.uv = TRANSFORM_TEX(i.uv, _MaskTex);
+				fixed4 maskTex = tex2D(_MaskTex,i.uv);
+
+				fixed4 final = lerp(mainTex,saturate(border*_DepthColor+mainTex*_DepthColor.a+maskTex*_DepthColor),saturate(border));
+				return final; 
+			}
+			ENDCG
+		}
+	}
+}
+
+```
+
+具体效果截图
+
+![avatar](./img/ImageEffect/DepthTexture9.gif)
+
+此时，我们的扫描效果就已经比上一个阶段高出一个档次了
